@@ -1,9 +1,11 @@
-﻿using LoanGateway.Services;
+﻿using LoanGateway.Models;
+using LoanGateway.Services;
 using LoanGeteway.Common;
 using LoanGeteway.Models;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
+using System;
 
 namespace LoanGeteway.Services
 {
@@ -46,31 +48,41 @@ namespace LoanGeteway.Services
                 Amount = request.Amount,
                 Status = request.Status,
                 Remarks = request.Remarks,
-                Id = (Guid)request.RequestId
+                RequestId = request.RequestId
             };
         }
 
         public async Task<LoanApplicationResponse> SubmitApplication(string loanType, LoanApplication request)
         {
-            var eligibility = new EligibilityCheck { AnnualIncome=request.AnnualIncome, Occupation=request.Occupation, Amount=request.Amount, Dob=request.Dob };
+            var eligibility = new EligibilityCheck { AnnualIncome=request.AnnualIncome, Occupation=request.Occupation, Amount=request.Amount };
             var (interestRate, emi) = LoanCalculator.CalculateInterestRateAndEMI(loanType,eligibility);
 
-            request.Arn = $"{loanType.ToUpper().Substring(0, 1)}{DateTime.Now.Ticks}"; // generating unique ARN
-            request.Emi = emi;
+            request.Arn = $"{loanType.ToUpper().Substring(0, 1)}ARN{DateTime.Now.Ticks}"; // generating unique ARN
+            request.Emi = double.IsInfinity(emi) || double.IsNaN(emi) ? 20000 : 0;
             request.InterestRate = interestRate;
+
+            List<string> files = new List<string>();
+            foreach (var file in request.Documents)
+            {
+                var (base64String, fileNAme)=await ConvertFileToBase64Async(file);
+                files.Add($"{fileNAme}|{file.ContentType}|{base64String}");
+            }
+            request.DocumentsBase64 = files;
 
             // save to DB
 
+            var collection = db.GetCollection<LoanApplication>(DbObjects.LoanApplicationCollection);
+            await collection.InsertOneAsync(request);
 
             // return  the response
             return new LoanApplicationResponse { 
                 Arn = request.Arn,
                 Amount = request.Amount,
                 InterestRate = interestRate,
-                Status =Status.Submitted,
+                Status = LoanRequestStatus.Submitted,
                 Remarks = "",
                 TenureMonths = request.TenureMonths,
-                UserId=request.Ssn
+                UserId=request.Pan
             };
         }
 
@@ -79,7 +91,7 @@ namespace LoanGeteway.Services
         {
            var result = new LoanStatusResponse
            {
-               Status = Status.InReview,
+               Status = LoanRequestStatus.InReview,
                Remarks = "You loan application is in review process.",
                Arn = arn,
                UserId = userId,
@@ -95,7 +107,7 @@ namespace LoanGeteway.Services
             var eligibilityCollection = db.GetCollection<EligibilityCheck>(DbObjects.EligibilityCollection);
             var loanApplicationCollection = db.GetCollection<EligibilityCheck>(DbObjects.LoanApplicationCollection);
 
-            var filter = Builders<EligibilityCheck>.Filter.Eq("SSN", userId);
+            var filter = Builders<EligibilityCheck>.Filter.Eq("Pan", userId);
             var projection = Builders<EligibilityCheck>.Projection.Exclude("_id");
 
             var eligibilityDocuments = await eligibilityCollection.Find(filter).Project(projection).ToListAsync();
@@ -110,6 +122,53 @@ namespace LoanGeteway.Services
                 LoanApplications= loanApplicationList // this will be fetched from database
             };
             return result;
+        }
+
+        public async Task<UserRequestHistory> GetHistory()
+        {
+            var eligibilityCollection = db.GetCollection<EligibilityCheck>(DbObjects.EligibilityCollection);
+            var loanApplicationCollection = db.GetCollection<EligibilityCheck>(DbObjects.LoanApplicationCollection);
+
+            var filter = Builders<EligibilityCheck>.Filter.Empty;
+            var projection = Builders<EligibilityCheck>.Projection.Exclude("_id");
+
+            var eligibilityDocuments = await eligibilityCollection.Find(filter).Project(projection).ToListAsync();
+            var eligibilityList = BsonSerializer.Deserialize<List<EligibilityCheck>>(eligibilityDocuments.ToJson());
+
+            var loanApplicationDocuments = await loanApplicationCollection.Find(filter).Project(projection).ToListAsync();
+            var loanApplicationList = BsonSerializer.Deserialize<List<LoanApplication>>(loanApplicationDocuments.ToJson());
+
+
+            var result = new UserRequestHistory
+            {
+                EligibilityChecks = eligibilityList, // this will be fetched from database
+                LoanApplications = loanApplicationList // this will be fetched from database
+            };
+            return result;
+        }
+
+        private async Task<(string,string)> ConvertFileToBase64Async(IFormFile file)
+        {
+            using (var memoryStream = new MemoryStream())
+            {
+                
+                await file.CopyToAsync(memoryStream);
+                var fileBytes = memoryStream.ToArray();
+                return (Convert.ToBase64String(fileBytes),file.FileName);
+            }
+        }
+
+        public async Task<bool> UpdateStatus(StausUpdateRequest request)
+        {
+            var collection = db.GetCollection<LoanApplication>(DbObjects.LoanApplicationCollection);
+
+            var filter = Builders<LoanApplication>.Filter.Eq(e => e.Arn, request.Arn);
+            var update = Builders<LoanApplication>.Update
+                .Set(e => e.Status, request.Status)
+                .Set(e => e.Remarks, request.Remarks);
+            var result = await collection.UpdateOneAsync(filter, update);
+           
+           return result.MatchedCount == 0;
         }
     }
 }

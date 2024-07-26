@@ -6,18 +6,20 @@ namespace LoanGeteway.Common
     {
         public static (double interestRate, double emi) CalculateInterestRateAndEMI(string loanType, EligibilityCheck eligibility)
         {
-            double interestRate = CalculateInterestRate(eligibility.AnnualIncome, eligibility.Amount, eligibility.Dob, eligibility.Occupation, loanType);
+            double interestRate = CalculateInterestRate(eligibility.AnnualIncome, eligibility.Amount, eligibility.Occupation, loanType);
             double emi = CalculateEMI(eligibility.Amount, interestRate, eligibility.TenureMonths);
             return (interestRate, emi);
         }
 
-        private static double CalculateInterestRate(double annualIncome, double amount, DateTime dob, string occupation, string loanType)
+        private static double CalculateInterestRate(double annualIncome, double amount, string occupation, string loanType)
         {
             double baseRate = occupation == "Salaried" ? 5.0 : 6.0; // Different base rate for occupation
             double incomeFactor = 0.1 * (annualIncome / 100000); // Adjust the income factor to be proportional
             double amountFactor = 0.001 * (amount / 100000); // Adjust the amount factor to be proportional
-            int age = CalculateAge(dob);
-            double ageFactor = age < 25 ? 0.5 : (age > 60 ? 0.7 : 0.0); // Age factor adjustment
+           // int age = CalculateAge(dob);
+            // double ageFactor = age < 25 ? 0.5 : (age > 60 ? 0.7 : 0.0); // Age factor adjustment
+            // double ageFactor = age < 25 ? 0.5 : (age > 60 ? 0.7 : 0.0); // Age factor adjustment
+            double ageFactor = 0; // Age factor adjustment
             double loanTypeFactor = GetLoanTypeFactor(loanType);
 
             // Calculate the interest rate ensuring it stays positive
@@ -51,7 +53,7 @@ namespace LoanGeteway.Common
                 case "S0001":
                     return -0.5;
                 default:
-                    return 0.0;
+                    return 4.0;
             }
         }
 

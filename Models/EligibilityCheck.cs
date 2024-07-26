@@ -5,13 +5,12 @@ namespace LoanGeteway.Models
 {
     public class EligibilityCheck
     {
-        
-        public Guid? RequestId { get; set; }
+        public string RequestId { get; set; }
         public string FullName { get; set; }
         public string Mobile { get; set; }
         public string Email { get; set; }
-        public string SSN { get; set; }
-        public DateTime Dob { get; set; }
+        public string Pan { get; set; }
+        public string Aadhaar { get; set; }
         public double Amount { get; set; }
         public int TenureMonths { get; set; }
         public bool Consent { get; set; }
@@ -23,11 +22,12 @@ namespace LoanGeteway.Models
         public double? Emi { get; set; } = 0;
         public string? Status { get; set; }
         public string? Remarks { get; set; }
+        public string? ProductCode { get; set; }
         // thi is backend use end
     }
     public class EligibilityCheckResponse
     {
-        public Guid Id { get; set; }
+        public string RequestId { get; set; }
         public double Amount { get; set; }
         public string Status { get; set; }
         public string Remarks { get; set; }

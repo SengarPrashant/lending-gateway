@@ -1,4 +1,5 @@
-﻿using LoanGeteway.Models;
+﻿using LoanGateway.Models;
+using LoanGeteway.Models;
 
 namespace LoanGeteway.Services
 {
@@ -9,5 +10,7 @@ namespace LoanGeteway.Services
         Task<LoanApplicationResponse> SubmitApplication(string productCode, LoanApplication request);
         Task<LoanStatusResponse> GetStatus(string userId, string arn);
         Task<UserRequestHistory> GetHistory(string userId);
+        Task<UserRequestHistory> GetHistory();
+        Task<bool> UpdateStatus(StausUpdateRequest request);
     }
 }
