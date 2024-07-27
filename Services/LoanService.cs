@@ -54,11 +54,10 @@ namespace LoanGeteway.Services
 
         public async Task<LoanApplicationResponse> SubmitApplication(string loanType, LoanApplication request)
         {
-            var eligibility = new EligibilityCheck { AnnualIncome=request.AnnualIncome, Occupation=request.Occupation, Amount=request.Amount };
+            var eligibility = new EligibilityCheck { AnnualIncome=request.AnnualIncome, Occupation=request.Occupation, TenureMonths=request.TenureMonths, Amount=request.Amount };
             var (interestRate, emi) = LoanCalculator.CalculateInterestRateAndEMI(loanType,eligibility);
 
-            request.Arn = $"{loanType.ToUpper().Substring(0, 1)}ARN{DateTime.Now.Ticks}"; // generating unique ARN
-            request.Emi = double.IsInfinity(emi) || double.IsNaN(emi) ? 20000 : 0;
+            request.Emi = emi;
             request.InterestRate = interestRate;
 
             List<string> files = new List<string>();
@@ -86,20 +85,29 @@ namespace LoanGeteway.Services
             };
         }
 
-
-        public async Task<LoanStatusResponse> GetStatus(string userId, string arn)
+        public async Task<LoanStatusResponse?> GetStatus(string userId, string arn)
         {
-           var result = new LoanStatusResponse
-           {
-               Status = LoanRequestStatus.InReview,
-               Remarks = "You loan application is in review process.",
-               Arn = arn,
-               UserId = userId,
-               PendingSteps = new List<string> { },
-               CompletedSteps = new List<string> { },
-           };
+            var loanApplicationCollection = db.GetCollection<LoanApplication>(DbObjects.LoanApplicationCollection);
+            var applicationFilter = Builders<LoanApplication>.Filter.Empty;
+            var applicationProjection = Builders<LoanApplication>.Projection.Exclude("_id");
+            var loanApplicationDocuments = await loanApplicationCollection.Find(applicationFilter).Project(applicationProjection).ToListAsync();
+            var loanApplicationList = BsonSerializer.Deserialize<List<LoanApplication>>(loanApplicationDocuments.ToJson());
 
-            return result;
+            if (loanApplicationList.Count > 0)
+            {
+                var (pending, completed) = GetSteps(loanApplicationList[0].Status);
+                return new LoanStatusResponse
+                {
+                    Status = loanApplicationList[0].Status,
+                    Remarks = loanApplicationList[0].Remarks,
+                    Arn = arn,
+                    UserId = userId,
+                    PendingSteps = pending,
+                    CompletedSteps = completed,
+                };
+            }
+
+            return null;
         }
 
         public async Task<UserRequestHistory> GetHistory(string userId)
@@ -127,15 +135,17 @@ namespace LoanGeteway.Services
         public async Task<UserRequestHistory> GetHistory()
         {
             var eligibilityCollection = db.GetCollection<EligibilityCheck>(DbObjects.EligibilityCollection);
-            var loanApplicationCollection = db.GetCollection<EligibilityCheck>(DbObjects.LoanApplicationCollection);
+            var loanApplicationCollection = db.GetCollection<LoanApplication>(DbObjects.LoanApplicationCollection);
 
-            var filter = Builders<EligibilityCheck>.Filter.Empty;
+            var eligibilityfilter = Builders<EligibilityCheck>.Filter.Empty;
             var projection = Builders<EligibilityCheck>.Projection.Exclude("_id");
 
-            var eligibilityDocuments = await eligibilityCollection.Find(filter).Project(projection).ToListAsync();
+            var eligibilityDocuments = await eligibilityCollection.Find(eligibilityfilter).Project(projection).ToListAsync();
             var eligibilityList = BsonSerializer.Deserialize<List<EligibilityCheck>>(eligibilityDocuments.ToJson());
 
-            var loanApplicationDocuments = await loanApplicationCollection.Find(filter).Project(projection).ToListAsync();
+            var applicationFilter = Builders<LoanApplication>.Filter.Empty;
+            var applicationProjection = Builders<LoanApplication>.Projection.Exclude("_id");
+            var loanApplicationDocuments = await loanApplicationCollection.Find(applicationFilter).Project(applicationProjection).ToListAsync();
             var loanApplicationList = BsonSerializer.Deserialize<List<LoanApplication>>(loanApplicationDocuments.ToJson());
 
 
@@ -168,7 +178,85 @@ namespace LoanGeteway.Services
                 .Set(e => e.Remarks, request.Remarks);
             var result = await collection.UpdateOneAsync(filter, update);
            
-           return result.MatchedCount == 0;
+           return result.MatchedCount > 0;
+        }
+
+        public EligibilityCheck ConvertToEligibilityCheckDto(EligibilityCheckRequest eligibility, string productCode)
+        {
+            return new EligibilityCheck { 
+                Aadhaar=eligibility.Aadhaar,
+                Amount=eligibility.Amount,
+                AnnualIncome=eligibility.AnnualIncome,
+                Consent=eligibility.Consent,
+                Email = eligibility.Email,
+                FullName=eligibility.FullName,
+                Mobile= eligibility.Mobile,
+                Occupation=eligibility.Occupation,
+                Pan=eligibility.Pan,
+                ProductCode=productCode.ToUpper(),
+                Status= LoanRequestStatus.Submitted,
+                TenureMonths= eligibility.TenureMonths
+            };
+        }
+
+        public LoanApplication ConvertToLoanApplicationDto(LoanApplicationRequest request, string productCode)
+        {
+            return new LoanApplication
+            {
+                Aadhaar = request.Aadhaar,
+                Amount = request.Amount,
+                AnnualIncome=request.AnnualIncome,
+                Arn= $"{productCode.ToUpper().Substring(0, 1)}ARN{DateTime.Now.Ticks}", // generating unique ARN
+                Consent= request.Consent,
+                Email= request.Email,
+                Documents= request.Documents,
+                EligibilityRequestId= request.EligibilityRequestId,
+                FullName= request.FullName,
+                Mobile=request.Mobile,
+                Occupation=request.Occupation,
+                Pan=request.Pan,
+                ProductCode=productCode.ToUpper(),
+                TenureMonths=request.TenureMonths,
+         };
+        }
+
+        public async Task<bool> ValidateProductCode(string productCode)
+        {
+            var list = await GetProductsList();
+            var found = list.Exists(x=>x.Code == productCode.ToUpper());
+            return found;
+        }
+
+
+        private (List<string>, List<string>) GetSteps(string currentStatus)
+        {
+            List<string> pending= new List<string>();
+            List<string> completed = new List<string>();
+
+            if (currentStatus == LoanRequestStatus.Submitted)
+            {
+                pending.AddRange(new List<string> { LoanRequestStatus.InReview, LoanRequestStatus.Approved, LoanRequestStatus.Disbursed });
+            }
+            if (currentStatus == LoanRequestStatus.InReview)
+            {
+                pending.AddRange(new List<string> { LoanRequestStatus.Approved, LoanRequestStatus.Disbursed });
+                completed.AddRange(new List<string> { LoanRequestStatus.Submitted});
+            }
+            if (currentStatus == LoanRequestStatus.Approved)
+            {
+                pending.AddRange(new List<string> { LoanRequestStatus.Disbursed });
+                completed.AddRange(new List<string> { LoanRequestStatus.Submitted, LoanRequestStatus.InReview });
+            }
+            if (currentStatus == LoanRequestStatus.Disbursed)
+            {
+                completed.AddRange(LoanRequestStatus.All);
+            }
+            if (currentStatus == LoanRequestStatus.Rejected)
+            {
+                completed.AddRange(new List<string> { LoanRequestStatus.Submitted, LoanRequestStatus.InReview });
+            }
+
+            return (pending, completed);
         }
     }
 }
